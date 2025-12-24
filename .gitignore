@@ -1,0 +1,34 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual envs
+.venv/
+venv/
+env/
+*_venv*/
+
+# PyTorch / checkpoints / large binaries
+*.pt
+*.pth
+*.ckpt
+*.onnx
+
+# Logs / TensorBoard
+runs/
+tensorboard/
+events.out.tfevents.*
+*.log
+
+# Common outputs
+save/
+outputs/
+checkpoints/
+wandb/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
