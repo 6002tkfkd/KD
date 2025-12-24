@@ -1,0 +1,8 @@
+**/*.pyc
+**/*.pt
+log/
+ssh_config_setting,txt
+split25_audio_shape,txt
+valid_audio_shape,txt
+valid_audio_shape.txt
+test_audio_shape.txt

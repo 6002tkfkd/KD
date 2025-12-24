@@ -1,0 +1,16 @@
+librosa
+pandas
+h5py
+numpy
+matplotlib
+tqdm
+lightning
+scikit-learn
+timm
+torchinfo
+lightning[pytorch-extra]==2.5.2
+neural-compressor
+dcase_util
+tensorboard
+msgpack==0.6.2
+soundfile

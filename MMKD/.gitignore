@@ -1,0 +1,26 @@
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# PyTorch / checkpoints
+*.pt
+*.pth
+*.ckpt
+
+# Logs / TensorBoard
+runs/
+tensorboard/
+events.out.tfevents.*
+*.log
+
+# Local save/output folders (프로젝트에 맞게)
+save/
+outputs/
+checkpoints/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

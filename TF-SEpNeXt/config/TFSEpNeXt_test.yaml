@@ -1,0 +1,60 @@
+### Test TF-SepNet on test set ###
+# Normally only need to change `ckpt_path`
+
+trainer:
+  logger:
+      # Logger to save the logs, configs, hyperparameters and checkpoints
+      class_path: lightning.pytorch.loggers.TensorBoardLogger
+      init_args:
+        # Save path
+        save_dir: log/test
+        # Sub-path of the save path
+        name: TEST_TFSEpNeXt
+
+# Path to the checkpoint of trained TF-SepNet
+ckpt_path: null
+model:
+  class_path: model.lit_asc.LitAcousticSceneClassificationSystem
+  init_args:
+    backbone:
+      class_path: model.backbones.TFSEpNeXt
+      init_args:
+        in_channels: 1
+        num_classes: 10
+        base_channels: 32
+        depth: 2262
+        dropout: 0.25
+        drop_path_concat: False
+    data_augmentation:
+      mix_up:
+        class_path: util.MixUp
+        init_args:
+          alpha: 0.3
+      mix_style:
+        class_path: util.FreqMixStyle
+        init_args:
+          alpha: 0.4
+          p: 0.8
+      spec_aug: null
+      dir_aug:
+        class_path: util.DeviceImpulseResponseAugmentation
+        init_args:
+          path_ir: /data/micIR # or /data/micIR or /database/micIR
+          p: 0.4
+    class_label: scene
+    domain_label: device
+    spec_extractor:
+      class_path: util.CpMel
+      init_args:
+        n_mels: 512
+data:
+  # Wrapped data module of train, valid, test DataLoaders
+  class_path: data.data_module.DCASEDataModule
+  init_args:
+    meta_dir: data/meta_dcase_2025
+    audio_dir: /data/TAU-urban-acoustic-scenes-2022-mobile-development
+    batch_size: 128
+    num_workers: 12
+    pin_memory: true
+    sampling_rate: 32000
+    test_subset: test
