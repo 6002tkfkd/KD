@@ -37,6 +37,53 @@ from helper.meta_loops import train_distill_multi_teacher as train, validate, va
 
 split_symbol = '~' if os.name == 'nt' else ':'
 
+MODEL_INPUT_KEYS = {
+    'BEATs': 'beats',
+    'PaSST': 'passt',
+    'EfficientNet': 'efficientnet',
+}
+
+
+def _infer_input_keys(teacher_name_list, student_input):
+    keys = []
+    for name in teacher_name_list:
+        key = MODEL_INPUT_KEYS.get(name, student_input)
+        if key and key not in keys:
+            keys.append(key)
+    if student_input and student_input not in keys:
+        keys.append(student_input)
+    return keys
+
+
+def _select_input_for_model(batch_input, model_name=None, default_key=None):
+    if not isinstance(batch_input, dict):
+        return batch_input
+    key = MODEL_INPUT_KEYS.get(model_name, default_key)
+    if key in batch_input:
+        return batch_input[key]
+    return next(iter(batch_input.values()))
+
+
+def _move_input_to_device(batch_input, opt):
+    if not isinstance(batch_input, dict):
+        batch_input = batch_input.float()
+        if opt.gpu is not None:
+            batch_input = batch_input.cuda(opt.gpu if opt.multiprocessing_distributed else 0, non_blocking=True)
+        return batch_input
+    moved = {}
+    for key, val in batch_input.items():
+        val = val.float()
+        if opt.gpu is not None:
+            val = val.cuda(opt.gpu if opt.multiprocessing_distributed else 0, non_blocking=True)
+        moved[key] = val
+    return moved
+
+
+def _batch_size_from_input(batch_input):
+    if isinstance(batch_input, dict):
+        return next(iter(batch_input.values())).size(0)
+    return batch_input.size(0)
+
 
 def parse_option():
 
@@ -75,7 +122,13 @@ def parse_option():
     parser.add_argument('--dcase_target_frames', type=int, default=1000, help='target frames for fbank')
     parser.add_argument('--dcase_dataset_mean', type=float, default=15.41663, help='fbank mean')
     parser.add_argument('--dcase_dataset_std', type=float, default=6.55582, help='fbank std')
+    parser.add_argument('--dcase_passt_mean', type=float, default=None, help='PaSST fbank mean (optional)')
+    parser.add_argument('--dcase_passt_std', type=float, default=None, help='PaSST fbank std (optional)')
+    parser.add_argument('--dcase_effnet_mean', type=float, default=None, help='EfficientNet fbank mean (optional)')
+    parser.add_argument('--dcase_effnet_std', type=float, default=None, help='EfficientNet fbank std (optional)')
     parser.add_argument('--dataset', type=str, default='cifar100', choices=['cifar100', 'imagenet', 'tinyimagenet', 'dogs', 'cub_200_2011', 'mit67', 'dcase'], help='dataset')
+    parser.add_argument('--student_input', type=str, default='beats', choices=['beats', 'passt', 'efficientnet'],
+                        help='input key used by the student when multiple specs are available')
 
     # model
     parser.add_argument('--model_s', type=str, default='resnet8',
@@ -342,7 +395,23 @@ def main_worker(gpu, ngpus_per_node, opt):
         train_loader, val_loader = get_finegrained_dataloaders(dataset=opt.dataset, batch_size=opt.batch_size, num_workers=opt.num_workers)                                                    
     elif opt.dataset == 'dcase':
         from dataset.dcase import get_dcase_dataloaders
-        train_loader, val_loader = get_dcase_dataloaders(meta_dir=opt.dcase_meta_dir, audio_dir=opt.dcase_audio_dir, batch_size=opt.batch_size, num_workers=opt.num_workers, sampling_rate=opt.dcase_sampling_rate, train_subset=opt.dcase_train_subset, target_frames=opt.dcase_target_frames, dataset_mean=opt.dcase_dataset_mean, dataset_std=opt.dcase_dataset_std)
+        input_keys = _infer_input_keys(opt.teacher_name_list, opt.student_input)
+        train_loader, val_loader = get_dcase_dataloaders(
+            meta_dir=opt.dcase_meta_dir,
+            audio_dir=opt.dcase_audio_dir,
+            batch_size=opt.batch_size,
+            num_workers=opt.num_workers,
+            sampling_rate=opt.dcase_sampling_rate,
+            train_subset=opt.dcase_train_subset,
+            target_frames=opt.dcase_target_frames,
+            dataset_mean=opt.dcase_dataset_mean,
+            dataset_std=opt.dcase_dataset_std,
+            input_keys=input_keys,
+            passt_mean=opt.dcase_passt_mean,
+            passt_std=opt.dcase_passt_std,
+            efficientnet_mean=opt.dcase_effnet_mean,
+            efficientnet_std=opt.dcase_effnet_std,
+        )
     else:
         raise NotImplementedError(opt.dataset)
 
@@ -354,10 +423,10 @@ def main_worker(gpu, ngpus_per_node, opt):
 
         if not opt.multiprocessing_distributed or opt.rank % ngpus_per_node == 0:
             if opt.teacher_num > 1:
-                teacher_acc, teacher_acc_top5, teacher_acc_list = validate_multi(val_loader, model_t_list, criterion_cls, opt)
+                teacher_acc, teacher_acc_top5, teacher_acc_list = validate_multi(val_loader, model_t_list, criterion_cls, opt, model_name_list=opt.teacher_name_list)
             else:
                 model_t = model_t_list[0]
-                teacher_acc, teacher_acc_top5, _ = validate(val_loader, model_t, criterion_cls, opt)
+                teacher_acc, teacher_acc_top5, _ = validate(val_loader, model_t, criterion_cls, opt, model_name=opt.teacher_name_list[0])
             if opt.teacher_num > 1:
                 print('teacher accuracy: ', teacher_acc.tolist())
             else:
@@ -375,19 +444,18 @@ def main_worker(gpu, ngpus_per_node, opt):
 
     def inner_objective(data, is_avg=False, matching_only=False):
         input, target = data
-        input = input.float()
-
-        if opt.gpu is not None:
-            input = input.cuda(opt.gpu if opt.multiprocessing_distributed else 0, non_blocking=True)
+        input = _move_input_to_device(input, opt)
         if torch.cuda.is_available():
             target = target.cuda(opt.gpu if opt.multiprocessing_distributed else 0, non_blocking=True)
 
-        feat_s, logit_s = model_s(input, is_feat=True, preact=opt.preact)
+        input_s = _select_input_for_model(input, default_key=opt.student_input)
+        feat_s, logit_s = model_s(input_s, is_feat=True, preact=opt.preact)
         feat_t_list = []
         logit_t_list = []
         with torch.no_grad():
-            for model_t in model_t_list:
-                feat_t, logit_t = model_t(input, is_feat=True, preact=opt.preact)
+            for model_t, model_name in zip(model_t_list, opt.teacher_name_list):
+                input_t = _select_input_for_model(input, model_name=model_name, default_key=opt.student_input)
+                feat_t, logit_t = model_t(input_t, is_feat=True, preact=opt.preact)
                 feat_t = [f.detach() for f in feat_t]
                 feat_t_list.append(feat_t)
                 logit_t_list.append(logit_t.detach())
@@ -416,23 +484,21 @@ def main_worker(gpu, ngpus_per_node, opt):
 
         if opt.hard_buffer:
             if not hardBuffer.is_full():
-                hardBuffer.put(input, target)
+                hardBuffer.put(input_s, target)
             else:
                 bo = (logit_s.argmax(1) != target)
-                hardBuffer.update(input[bo], target[bo])
+                hardBuffer.update(input_s[bo], target[bo])
 
         return total_loss
 
     def outer_objective(data):
         input, target = data
-        input = input.float()
-
-        if opt.gpu is not None:
-            input = input.cuda(opt.gpu if opt.multiprocessing_distributed else 0, non_blocking=True)
+        input = _move_input_to_device(input, opt)
         if torch.cuda.is_available():
             target = target.cuda(opt.gpu if opt.multiprocessing_distributed else 0, non_blocking=True)
 
-        feat_s, logit_s = model_s(input, is_feat=True, preact=opt.preact)
+        input_s = _select_input_for_model(input, default_key=opt.student_input)
+        feat_s, logit_s = model_s(input_s, is_feat=True, preact=opt.preact)
         acc1, acc5 = accuracy(logit_s, target, topk=(1, 5))
         train_state['hard_acc1'] = acc1
         train_state['hard_acc5'] = acc5
@@ -471,7 +537,7 @@ def main_worker(gpu, ngpus_per_node, opt):
         for idx, data in enumerate(train_loader):
             input, target = data
             data_time.update(time.time() - end)
-            if opt.batch_size > input.size(0): continue
+            if opt.batch_size > _batch_size_from_input(input): continue
             # ===================train student=====================
 
             model_s_optimizer.zero_grad()
@@ -487,9 +553,10 @@ def main_worker(gpu, ngpus_per_node, opt):
             # model_s_optimizer.step(None)
             # weight_optimizer.step()
 
-            losses.update(train_state['total_loss'], input.size(0))
-            top1.update(train_state['acc1'][0], input.size(0))
-            top5.update(train_state['acc5'][0], input.size(0))
+            batch_size = _batch_size_from_input(input)
+            losses.update(train_state['total_loss'], batch_size)
+            top1.update(train_state['acc1'][0], batch_size)
+            top5.update(train_state['acc5'][0], batch_size)
 
             batch_time.update(time.time() - end)
 

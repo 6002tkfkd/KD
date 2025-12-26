@@ -9,7 +9,7 @@ venv/
 env/
 *_venv*/
 
-# PyTorch / checkpoints / large binaries
+# PyTorch / checkpoints
 *.pt
 *.pth
 *.ckpt
@@ -21,7 +21,7 @@ tensorboard/
 events.out.tfevents.*
 *.log
 
-# Common outputs
+# Outputs
 save/
 outputs/
 checkpoints/

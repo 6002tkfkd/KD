@@ -12,8 +12,44 @@ from torch.autograd import Variable
 from .util import AverageMeter, accuracy, reduce_tensor, adjust_learning_rate, accuracy_list
 from .optimization import find_optimal_svm
 
+MODEL_INPUT_KEYS = {
+    'BEATs': 'beats',
+    'PaSST': 'passt',
+    'EfficientNet': 'efficientnet',
+}
 
-def validate(val_loader, model, criterion, opt, is_meta=False):
+
+def _select_input_for_model(batch_input, model_name=None, default_key=None):
+    if not isinstance(batch_input, dict):
+        return batch_input
+    key = MODEL_INPUT_KEYS.get(model_name, default_key)
+    if key in batch_input:
+        return batch_input[key]
+    return next(iter(batch_input.values()))
+
+
+def _move_input_to_device(batch_input, opt):
+    if not isinstance(batch_input, dict):
+        batch_input = batch_input.float()
+        if opt.gpu is not None:
+            batch_input = batch_input.cuda(opt.gpu if opt.multiprocessing_distributed else 0, non_blocking=True)
+        return batch_input
+    moved = {}
+    for key, val in batch_input.items():
+        val = val.float()
+        if opt.gpu is not None:
+            val = val.cuda(opt.gpu if opt.multiprocessing_distributed else 0, non_blocking=True)
+        moved[key] = val
+    return moved
+
+
+def _batch_size_from_input(batch_input):
+    if isinstance(batch_input, dict):
+        return next(iter(batch_input.values())).size(0)
+    return batch_input.size(0)
+
+
+def validate(val_loader, model, criterion, opt, is_meta=False, model_name=None):
     """validation"""
     
     batch_time = AverageMeter()
@@ -35,21 +71,20 @@ def validate(val_loader, model, criterion, opt, is_meta=False):
             else:
                 input, target = batch_data[0]['data'], batch_data[0]['label'].squeeze().long()
 
-            input = input.float()
-            if opt.gpu is not None:
-                input = input.cuda(opt.gpu if opt.multiprocessing_distributed else 0, non_blocking=True)
+            input = _move_input_to_device(input, opt)
             if torch.cuda.is_available():
                 target = target.cuda(opt.gpu if opt.multiprocessing_distributed else 0, non_blocking=True)
 
             # compute output
-            output = model(input)
+            input_model = _select_input_for_model(input, model_name=model_name, default_key=getattr(opt, 'student_input', None))
+            output = model(input_model)
             loss = criterion(output, target)
-            losses.update(loss.item(), input.size(0))
+            losses.update(loss.item(), input_model.size(0))
 
             # measure accuracy and record loss
             metrics = accuracy(output, target, topk=(1, 5))
-            top1.update(metrics[0].item(), input.size(0))
-            top5.update(metrics[1].item(), input.size(0))
+            top1.update(metrics[0].item(), input_model.size(0))
+            top5.update(metrics[1].item(), input_model.size(0))
 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -80,7 +115,7 @@ def validate(val_loader, model, criterion, opt, is_meta=False):
     return top1.avg, top5.avg, losses.avg
 
 def train_distill_multi_teacher(epoch, train_loader, module_list, criterion_list, 
-                    model_s, model_s_optimizer, WeightLogits, weight_optimizer, opt):
+                    model_s, model_s_optimizer, WeightLogits, weight_optimizer, opt, model_name_list=None):
     """One epoch distillation with multiple teacher"""
     # set modules as train()
     for module in module_list:
@@ -113,20 +148,23 @@ def train_distill_multi_teacher(epoch, train_loader, module_list, criterion_list
             input, target = data
         else:
             input, target = data[0]['data'], data[0]['label'].squeeze().long()
-        input = input.float()
 
-        if opt.gpu is not None:
-            input = input.cuda(opt.gpu if opt.multiprocessing_distributed else 0, non_blocking=True)
+        input = _move_input_to_device(input, opt)
         if torch.cuda.is_available():
             target = target.cuda(opt.gpu if opt.multiprocessing_distributed else 0, non_blocking=True)
 
         # ===================forward=====================
-        feat_s, logit_s = model_s(input, is_feat=True, preact=opt.preact)
+        input_s = _select_input_for_model(input, model_name=None, default_key=getattr(opt, 'student_input', None))
+        feat_s, logit_s = model_s(input_s, is_feat=True, preact=opt.preact)
         feat_t_list = []
         logit_t_list = []
         with torch.no_grad():
-            for model_t in model_t_list:
-                feat_t, logit_t = model_t(input, is_feat=True, preact=opt.preact)
+            for model_index, model_t in enumerate(model_t_list):
+                model_name = None
+                if model_name_list is not None and model_index < len(model_name_list):
+                    model_name = model_name_list[model_index]
+                input_t = _select_input_for_model(input, model_name=model_name, default_key=getattr(opt, 'student_input', None))
+                feat_t, logit_t = model_t(input_t, is_feat=True, preact=opt.preact)
                 feat_t = [f.detach() for f in feat_t]
                 feat_t_list.append(feat_t)
                 logit_t_list.append(logit_t)
@@ -169,9 +207,9 @@ def train_distill_multi_teacher(epoch, train_loader, module_list, criterion_list
             loss = new_gamma * loss_cls + new_alpha * loss_div + new_beta * loss_kd
         acc1, acc5 = accuracy(logit_s, target, topk=(1, 5))
 
-        losses.update(loss.item(), input.size(0))
-        top1.update(acc1[0], input.size(0))
-        top5.update(acc5[0], input.size(0))
+        losses.update(loss.item(), input_s.size(0))
+        top1.update(acc1[0], input_s.size(0))
+        top5.update(acc5[0], input_s.size(0))
 
         # ===================backward=====================
         model_s_optimizer.zero_grad()
@@ -212,7 +250,7 @@ def train_distill_multi_teacher(epoch, train_loader, module_list, criterion_list
 
 
 
-def validate_multi(val_loader, model_list, criterion, opt):
+def validate_multi(val_loader, model_list, criterion, opt, model_name_list=None):
     """validation milti model using voting"""
 
     model_num = len(model_list)
@@ -238,24 +276,27 @@ def validate_multi(val_loader, model_list, criterion, opt):
             else:
                 input, target = batch_data[0]['data'], batch_data[0]['label'].squeeze().long()
 
-            if opt.gpu is not None:
-                input = input.cuda(opt.gpu if opt.multiprocessing_distributed else 0, non_blocking=True)
+            input = _move_input_to_device(input, opt)
             if torch.cuda.is_available():
                 target = target.cuda(opt.gpu if opt.multiprocessing_distributed else 0, non_blocking=True)
 
             output_list = []
             for model_index, model in enumerate(model_list):
+                model_name = None
+                if model_name_list is not None and model_index < len(model_name_list):
+                    model_name = model_name_list[model_index]
+                input_model = _select_input_for_model(input, model_name=model_name, default_key=getattr(opt, 'student_input', None))
 
                 # compute output
-                output = model(input)
+                output = model(input_model)
                 output_list.append(output)
                 loss = criterion(output, target)
 
                 # measure accuracy and record loss
                 acc1, acc5 = accuracy(output, target, topk=(1, 5))
-                losses_list[model_index].update(loss.item(), input.size(0))
-                top1_list[model_index].update(acc1[0], input.size(0))
-                top5_list[model_index].update(acc5[0], input.size(0))
+                losses_list[model_index].update(loss.item(), input_model.size(0))
+                top1_list[model_index].update(acc1[0], input_model.size(0))
+                top5_list[model_index].update(acc5[0], input_model.size(0))
 
                 # measure elapsed time
                 batch_time.update(time.time() - end)
@@ -273,8 +314,9 @@ def validate_multi(val_loader, model_list, criterion, opt):
                               top1=top1_list[model_index], top5=top5_list[model_index]))
 
             acc1, acc5 = accuracy_list(output_list, target, topk=(1, 5))
-            top1.update(acc1[0], input.size(0))
-            top5.update(acc5[0], input.size(0))
+            batch_size = _batch_size_from_input(input)
+            top1.update(acc1[0], batch_size)
+            top5.update(acc5[0], batch_size)
             if idx % opt.print_freq == 0:
                 print('Model Ensemble\t'
                       'Test: [{0}/{1}]\t'
