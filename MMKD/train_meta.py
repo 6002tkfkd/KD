@@ -41,6 +41,7 @@ MODEL_INPUT_KEYS = {
     'BEATs': 'beats',
     'PaSST': 'passt',
     'EfficientNet': 'efficientnet',
+    'TFSEpNeXt': 'tfsepnext',
 }
 
 
@@ -117,8 +118,9 @@ def parse_option():
     # dataset
     parser.add_argument('--dcase_meta_dir', type=str, default='/home/work/HAN3/easy_dcase_task1/data/meta_dcase_2025', help='path to DCASE meta dir')
     parser.add_argument('--dcase_audio_dir', type=str, default='/home/work/dcase2025/TAU-urban-acoustic-scenes-2022-mobile-development', help='path to DCASE audio dir')
-    parser.add_argument('--dcase_train_subset', type=str, default='split5', help='train subset name for DCASE')
-    parser.add_argument('--dcase_sampling_rate', type=int, default=16000, help='sampling rate for DCASE')
+    parser.add_argument('--dcase_train_subset', type=str, default='split100', help='train subset name for DCASE')
+    parser.add_argument('--dcase_sampling_rate', type=int, default=32000, help='sampling rate for DCASE')
+    parser.add_argument('--dcase_beats_sampling_rate', type=int, default=16000, help='sampling rate for BEATs input')
     parser.add_argument('--dcase_target_frames', type=int, default=1000, help='target frames for fbank')
     parser.add_argument('--dcase_dataset_mean', type=float, default=15.41663, help='fbank mean')
     parser.add_argument('--dcase_dataset_std', type=float, default=6.55582, help='fbank std')
@@ -127,7 +129,7 @@ def parse_option():
     parser.add_argument('--dcase_effnet_mean', type=float, default=None, help='EfficientNet fbank mean (optional)')
     parser.add_argument('--dcase_effnet_std', type=float, default=None, help='EfficientNet fbank std (optional)')
     parser.add_argument('--dataset', type=str, default='cifar100', choices=['cifar100', 'imagenet', 'tinyimagenet', 'dogs', 'cub_200_2011', 'mit67', 'dcase'], help='dataset')
-    parser.add_argument('--student_input', type=str, default='beats', choices=['beats', 'passt', 'efficientnet'],
+    parser.add_argument('--student_input', type=str, default='beats', choices=['beats', 'passt', 'efficientnet', 'tfsepnext'],
                         help='input key used by the student when multiple specs are available')
 
     # model
@@ -396,6 +398,9 @@ def main_worker(gpu, ngpus_per_node, opt):
     elif opt.dataset == 'dcase':
         from dataset.dcase import get_dcase_dataloaders
         input_keys = _infer_input_keys(opt.teacher_name_list, opt.student_input)
+        sampling_rate_map = {}
+        if 'beats' in input_keys:
+            sampling_rate_map['beats'] = opt.dcase_beats_sampling_rate
         train_loader, val_loader = get_dcase_dataloaders(
             meta_dir=opt.dcase_meta_dir,
             audio_dir=opt.dcase_audio_dir,
@@ -411,6 +416,7 @@ def main_worker(gpu, ngpus_per_node, opt):
             passt_std=opt.dcase_passt_std,
             efficientnet_mean=opt.dcase_effnet_mean,
             efficientnet_std=opt.dcase_effnet_std,
+            sampling_rate_map=sampling_rate_map,
         )
     else:
         raise NotImplementedError(opt.dataset)

@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from pathlib import Path
+
 from .beats.BEATs import BEATsConfig, BEATs
 
 
@@ -8,7 +10,16 @@ class BEATsWrapper(nn.Module):
     def __init__(self, pretrained=None, num_classes=10, **kwargs):
         super().__init__()
         ckpt = torch.load(pretrained, map_location='cpu') if pretrained else None
-        hyperparams = ckpt['cfg'] if ckpt is not None else dict(kwargs)
+        hyperparams = None
+        base_ckpt = None
+        if ckpt is not None:
+            if 'cfg' in ckpt:
+                hyperparams = ckpt['cfg']
+            elif 'state_dict' in ckpt:
+                base_ckpt = self._load_base_beats_ckpt(pretrained)
+                hyperparams = base_ckpt['cfg']
+        if hyperparams is None:
+            hyperparams = dict(kwargs)
         if ckpt is None and 'input_patch_size' not in hyperparams:
             hyperparams['input_patch_size'] = 16
         cfg = BEATsConfig(hyperparams)
@@ -16,11 +27,43 @@ class BEATsWrapper(nn.Module):
             raise ValueError('input_patch_size must be set when pretrained is None')
 
         self.encoder = BEATs(cfg)
-        if ckpt is not None:
-            self.encoder.load_state_dict(ckpt['model'], strict=False)
-
         self.classifier = nn.Linear(cfg.encoder_embed_dim, num_classes)
         self.num_classes = num_classes
+        if ckpt is not None:
+            if 'model' in ckpt:
+                self.encoder.load_state_dict(ckpt['model'], strict=False)
+            elif 'state_dict' in ckpt:
+                self._load_lightning_state(ckpt['state_dict'])
+
+    def _load_base_beats_ckpt(self, lightning_ckpt_path):
+        config_path = Path(lightning_ckpt_path).parents[1] / 'config.yaml'
+        if not config_path.exists():
+            raise FileNotFoundError(
+                f'Could not find config.yaml for {lightning_ckpt_path}. '
+                'Please provide a BEATs checkpoint with cfg.'
+            )
+        base_path = None
+        with config_path.open('r', encoding='utf-8') as fh:
+            for line in fh:
+                stripped = line.strip()
+                if stripped.startswith('pretrained:'):
+                    base_path = stripped.split(':', 1)[1].strip().strip('\'"')
+                    break
+        if not base_path:
+            raise ValueError(f'Could not find pretrained path in {config_path}')
+        return torch.load(base_path, map_location='cpu')
+
+    def _load_lightning_state(self, state_dict):
+        encoder_state = {}
+        classifier_state = {}
+        for key, value in state_dict.items():
+            if key.startswith('backbone.encoder.'):
+                encoder_state[key.replace('backbone.encoder.', '', 1)] = value
+            elif key.startswith('backbone.classifier.linear.'):
+                classifier_state[key.replace('backbone.classifier.linear.', '', 1)] = value
+        self.encoder.load_state_dict(encoder_state, strict=False)
+        if classifier_state:
+            self.classifier.load_state_dict(classifier_state, strict=False)
 
     def _patch_embed(self, x):
         features = self.encoder.patch_embedding(x)

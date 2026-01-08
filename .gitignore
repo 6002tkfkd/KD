@@ -26,6 +26,8 @@ save/
 outputs/
 checkpoints/
 wandb/
+log/
+easy_dcase_task1/dcase/
 
 # OS / Editor
 .DS_Store

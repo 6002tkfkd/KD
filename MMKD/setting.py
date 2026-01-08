@@ -25,7 +25,7 @@ cifar100_student_model_name = [
 
 
 dcase_teacher_model_name = [
-    'dcase-BEATs-0', 'dcase-PaSST-1', 'dcase-EfficientNet-2',
+    'dcase-BEATs-0', 'dcase-BEATs-1', 'dcase-BEATs-2',
 ]
 
 
@@ -35,9 +35,9 @@ teacher_model_path_dict = {
     'cifar100-vgg13-0': '../save/MultiT/teachers/models/vgg13_cifar100_lr_0.05_decay_0.0005_trial_1/vgg13_best.pth',
     'cifar100-vgg13-1': '../save/MultiT/teachers/models/vgg13_cifar100_lr_0.05_decay_0.0005_trial_2/vgg13_best.pth',
     'cifar100-vgg13-2': '../save/MultiT/teachers/models/vgg13_cifar100_lr_0.05_decay_0.0005_trial_4/vgg13_best.pth', 
-    'dcase-BEATs-0': '/home/work/dcase2025/beats/BEATs_iter3_plus_AS20K_finetuned_on_AS2M_cpt2.pt',
-    'dcase-PaSST-1': '/home/work/dcase2025/passt/passt-l-kd-ap.47.pt',
-    'dcase-EfficientNet-2': '/home/work/dcase2025/efficientnet/efficientnet-b7-dcc49843.pth',
+    'dcase-BEATs-0': '/home/work/HAN3/log/beats_finetune_seed1/version_2/checkpoints/epoch=13-val_acc=0.6206.ckpt',
+    'dcase-BEATs-1': '/home/work/HAN3/log/beats_finetune_seed2/version_1/checkpoints/epoch=17-val_acc=0.6155.ckpt',
+    'dcase-BEATs-2': '/home/work/HAN3/log/beats_finetune_seed3/version_1/checkpoints/epoch=9-val_acc=0.6151.ckpt',
 }
 
 # ------------- student net --------------------#
