@@ -169,13 +169,14 @@ class DCASEAudioDataset(Dataset):
     def __init__(self, meta_dir: str, audio_dir: str, subset: str, sampling_rate: int = 16000,
                  target_frames: int = 1000, dataset_mean: float = 15.41663, dataset_std: float = 6.55582,
                  input_keys=None, passt_mean=None, passt_std=None, efficientnet_mean=None, efficientnet_std=None,
-                 sampling_rate_map=None):
+                 sampling_rate_map=None, target_frames_map=None):
         self.meta_dir = meta_dir
         self.audio_dir = audio_dir
         self.subset = subset
         self.sr = sampling_rate
         self.sr_map = sampling_rate_map or {}
         self.target_frames = target_frames
+        self.target_frames_map = target_frames_map or {}
         self.meta_subset = pd.read_csv(f"{self.meta_dir}/{self.subset}.csv", sep='	')
         self.input_keys = input_keys or ['beats']
         self.extractors = _build_extractors(
@@ -193,16 +194,16 @@ class DCASEAudioDataset(Dataset):
     def __len__(self):
         return len(self.meta_subset)
 
-    def _pad_or_trim(self, fbank):
-        if self.target_frames is None:
+    def _pad_or_trim(self, fbank, target_frames):
+        if target_frames is None:
             return fbank
         frames = fbank.shape[0]
-        if frames == self.target_frames:
+        if frames == target_frames:
             return fbank
-        if frames < self.target_frames:
-            pad = torch.zeros((self.target_frames - frames, fbank.shape[1]), dtype=fbank.dtype)
+        if frames < target_frames:
+            pad = torch.zeros((target_frames - frames, fbank.shape[1]), dtype=fbank.dtype)
             return torch.cat([fbank, pad], dim=0)
-        return fbank[:self.target_frames]
+        return fbank[:target_frames]
 
     def __getitem__(self, i):
         row_i = self.meta_subset.iloc[i]
@@ -216,7 +217,8 @@ class DCASEAudioDataset(Dataset):
                 wav, _ = librosa.load(f"{self.audio_dir}/{filename}", sr=sample_rate)
                 wav_cache[sample_rate] = torch.from_numpy(wav)
             fbank = self.extractors[key](wav_cache[sample_rate].unsqueeze(0))[0]
-            fbank = self._pad_or_trim(fbank)
+            key_target_frames = self.target_frames_map.get(key, self.target_frames)
+            fbank = self._pad_or_trim(fbank, key_target_frames)
             inputs[key] = fbank.unsqueeze(0)
 
         scene_label = filename.split('/')[-1].split('-')[0]
@@ -230,17 +232,17 @@ class DCASEAudioDataset(Dataset):
 def get_dcase_dataloaders(meta_dir, audio_dir, batch_size=64, num_workers=4, sampling_rate=16000,
                           train_subset='split5', target_frames=1000, dataset_mean=15.41663, dataset_std=6.55582,
                           input_keys=None, passt_mean=None, passt_std=None, efficientnet_mean=None,
-                          efficientnet_std=None, sampling_rate_map=None):
+                          efficientnet_std=None, sampling_rate_map=None, target_frames_map=None):
     train_set = DCASEAudioDataset(meta_dir, audio_dir, subset=train_subset, sampling_rate=sampling_rate,
                                   target_frames=target_frames, dataset_mean=dataset_mean, dataset_std=dataset_std,
                                   input_keys=input_keys, passt_mean=passt_mean, passt_std=passt_std,
                                   efficientnet_mean=efficientnet_mean, efficientnet_std=efficientnet_std,
-                                  sampling_rate_map=sampling_rate_map)
+                                  sampling_rate_map=sampling_rate_map, target_frames_map=target_frames_map)
     val_set = DCASEAudioDataset(meta_dir, audio_dir, subset='valid', sampling_rate=sampling_rate,
                                 target_frames=target_frames, dataset_mean=dataset_mean, dataset_std=dataset_std,
                                 input_keys=input_keys, passt_mean=passt_mean, passt_std=passt_std,
                                 efficientnet_mean=efficientnet_mean, efficientnet_std=efficientnet_std,
-                                sampling_rate_map=sampling_rate_map)
+                                sampling_rate_map=sampling_rate_map, target_frames_map=target_frames_map)
     train_loader = DataLoader(train_set, batch_size=batch_size, num_workers=num_workers, shuffle=True, pin_memory=True)
     val_loader = DataLoader(val_set, batch_size=batch_size, num_workers=num_workers, shuffle=False, pin_memory=True)
     return train_loader, val_loader

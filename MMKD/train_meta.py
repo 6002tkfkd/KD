@@ -121,6 +121,8 @@ def parse_option():
     parser.add_argument('--dcase_train_subset', type=str, default='split100', help='train subset name for DCASE')
     parser.add_argument('--dcase_sampling_rate', type=int, default=32000, help='sampling rate for DCASE')
     parser.add_argument('--dcase_beats_sampling_rate', type=int, default=16000, help='sampling rate for BEATs input')
+    parser.add_argument('--dcase_beats_no_pad_trim', action='store_true',
+                        help='skip pad/trim for BEATs fbank to match easy_dcase_task1 preprocessing')
     parser.add_argument('--dcase_target_frames', type=int, default=1000, help='target frames for fbank')
     parser.add_argument('--dcase_dataset_mean', type=float, default=15.41663, help='fbank mean')
     parser.add_argument('--dcase_dataset_std', type=float, default=6.55582, help='fbank std')
@@ -401,6 +403,9 @@ def main_worker(gpu, ngpus_per_node, opt):
         sampling_rate_map = {}
         if 'beats' in input_keys:
             sampling_rate_map['beats'] = opt.dcase_beats_sampling_rate
+        target_frames_map = None
+        if opt.dcase_beats_no_pad_trim:
+            target_frames_map = {'beats': None}
         train_loader, val_loader = get_dcase_dataloaders(
             meta_dir=opt.dcase_meta_dir,
             audio_dir=opt.dcase_audio_dir,
@@ -417,6 +422,7 @@ def main_worker(gpu, ngpus_per_node, opt):
             efficientnet_mean=opt.dcase_effnet_mean,
             efficientnet_std=opt.dcase_effnet_std,
             sampling_rate_map=sampling_rate_map,
+            target_frames_map=target_frames_map,
         )
     else:
         raise NotImplementedError(opt.dataset)
@@ -435,6 +441,7 @@ def main_worker(gpu, ngpus_per_node, opt):
                 teacher_acc, teacher_acc_top5, _ = validate(val_loader, model_t, criterion_cls, opt, model_name=opt.teacher_name_list[0])
             if opt.teacher_num > 1:
                 print('teacher accuracy: ', teacher_acc.tolist())
+                print('teacher accuracy (per teacher): ', teacher_acc_list.tolist())
             else:
                 print('teacher accuracy: ', teacher_acc)
 

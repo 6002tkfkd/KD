@@ -12,7 +12,7 @@ trainer:
         name: beats_test
 
 # Path to the checkpoint of fine-tuned BEATs
-ckpt_path: log/beats_finetune/version_*/checkpoints/***.ckpt
+ckpt_path: /home/work/HAN3/log/beats_finetune_seed2/version_1/checkpoints/epoch=17-val_acc=0.6155.ckpt
 
 model:
   class_path: model.lit_asc.LitAcousticSceneClassificationSystem
@@ -20,7 +20,7 @@ model:
     backbone:
       class_path: model.backbones.PretrainedBEATs
       init_args:
-          pretrained: model/beats/checkpoints/BEATs_iter3_plus_AS2M.pt
+          pretrained: /home/work/dcase2025/beats/BEATs_iter3_plus_AS20K_finetuned_on_AS2M_cpt2.pt
           num_classes: 10
     data_augmentation:
       mix_up: null
@@ -38,8 +38,8 @@ model:
 data:
   class_path: data.data_module.DCASEDataModule
   init_args:
-    meta_dir: data/meta_dcase_2024
-    audio_dir: ../TAU-urban-acoustic-scenes-2022-mobile-development/development
+    meta_dir: /home/work/HAN3/easy_dcase_task1/data/meta_dcase_2025
+    audio_dir: /home/work/dcase2025/TAU-urban-acoustic-scenes-2022-mobile-development
     batch_size: 128
     num_workers: 8
     pin_memory: true
